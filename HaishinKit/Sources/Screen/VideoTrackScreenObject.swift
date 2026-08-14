@@ -41,6 +41,18 @@ public final class VideoTrackScreenObject: ScreenObject, ChromaKeyProcessable {
     private var queue: TypedBlockQueue<CMSampleBuffer>?
     private var effects: [any VideoEffect] = .init()
     private var frameTracker = FrameTracker()
+    /// The last frame shown, held so a momentary gap in the queue draws it
+    /// again instead of drawing nothing.
+    ///
+    /// Two gaps exist by construction. Retargeting `track` — a switcher cut —
+    /// leaves the queue holding the old track's frames; one render drains
+    /// them and the next has nothing until the new track's first frame lands,
+    /// which painted the background through the object as a black flash on
+    /// every cut. And a producer that pauses (a held replay frame) stops
+    /// refilling the queue within three renders. A broadcast surface should
+    /// hold the last picture across both; `reset()` still clears it so a
+    /// deliberate teardown goes dark rather than freezing.
+    private var heldPixelBuffer: CVPixelBuffer?
 
     /// Create a screen object.
     override public init() {
@@ -84,9 +96,18 @@ public final class VideoTrackScreenObject: ScreenObject, ChromaKeyProcessable {
         let presentationTimeStamp = renderer.presentationTimeStamp.convertTime(from: CMClockGetHostTimeClock(), to: renderer.synchronizationClock)
         guard let sampleBuffer = queue?.dequeue(presentationTimeStamp),
               let pixelBuffer = sampleBuffer.imageBuffer else {
-            return nil
+            // Bridge the gap with the last frame rather than draw nothing.
+            guard let heldPixelBuffer else {
+                return nil
+            }
+            return makeImage(from: heldPixelBuffer, renderer)
         }
+        heldPixelBuffer = pixelBuffer
         frameTracker.update(sampleBuffer.presentationTimeStamp)
+        return makeImage(from: pixelBuffer, renderer)
+    }
+
+    private func makeImage(from pixelBuffer: CVPixelBuffer, _ renderer: some ScreenRenderer) -> CIImage? {
         // Resizing before applying the filter for performance optimization.
         var image = CIImage(cvPixelBuffer: pixelBuffer, options: renderer.imageOptions).transformed(by: videoGravity.scale(
             bounds.size,
@@ -133,6 +154,7 @@ public final class VideoTrackScreenObject: ScreenObject, ChromaKeyProcessable {
 
     func reset() {
         frameTracker.clear()
+        heldPixelBuffer = nil
         try? queue?.reset()
         invalidateLayout()
     }
