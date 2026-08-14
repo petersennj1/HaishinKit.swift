@@ -145,7 +145,30 @@ public final class Screen: ScreenObjectContainerConvertible {
         return videoTrackScreenObject.unregisterVideoEffect(effect)
     }
 
+    /// Smoothed milliseconds from a main-track frame's presentation timestamp
+    /// to its arrival at the screen. For feeds whose frames are stamped at
+    /// `MediaMixer.append` time this measures the mixer's internal delivery
+    /// lag — the async-stream hop between append and compositing, which is
+    /// otherwise invisible from outside. Readable from any thread.
+    public nonisolated var deliveryLagMs: Double {
+        deliveryLagLock.lock()
+        defer { deliveryLagLock.unlock() }
+        return _deliveryLagMs
+    }
+
+    private nonisolated(unsafe) var _deliveryLagMs: Double = 0
+    private nonisolated let deliveryLagLock = NSLock()
+
     func append(_ track: UInt8, buffer: CMSampleBuffer) {
+        if track == videoTrackScreenObject.track {
+            let lagMs = (CMClockGetTime(CMClockGetHostTimeClock()).seconds
+                - buffer.presentationTimeStamp.seconds) * 1000
+            if lagMs.isFinite, lagMs > -100, lagMs < 60_000 {
+                deliveryLagLock.lock()
+                _deliveryLagMs = _deliveryLagMs * 0.9 + lagMs * 0.1
+                deliveryLagLock.unlock()
+            }
+        }
         let screens: [VideoTrackScreenObject] = root.getScreenObjects()
         for screen in screens where screen.track == track {
             screen.enqueue(buffer)
