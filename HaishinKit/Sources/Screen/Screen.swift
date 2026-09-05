@@ -159,6 +159,61 @@ public final class Screen: ScreenObjectContainerConvertible {
     private nonisolated(unsafe) var _deliveryLagMs: Double = 0
     private nonisolated let deliveryLagLock = NSLock()
 
+    /// Frames per second actually composited and handed to the outputs, and
+    /// the longest gap between two consecutive ones in the last second.
+    ///
+    /// A different question from the capture rate or the encoder's expected
+    /// rate: this is what the encoder is really fed, and so what a viewer
+    /// really watches. It is also the only place the number exists — a feed
+    /// teed off the capture device never passes through here, which is why
+    /// a recording can be clean while the stream is not. Counted from the
+    /// moment the compositor starts, so it reads during preview, before
+    /// anything is on air.
+    public nonisolated var composedFrameRate: Double {
+        frameRateLock.lock()
+        defer { frameRateLock.unlock() }
+        return _composedFrameRate
+    }
+
+    /// Milliseconds between the two most widely separated consecutive frames
+    /// of the last second. At a steady 30 fps this sits near 33; a stall
+    /// shows here long before the average moves off 30.
+    public nonisolated var composedWorstGapMs: Double {
+        frameRateLock.lock()
+        defer { frameRateLock.unlock() }
+        return _composedWorstGapMs
+    }
+
+    private nonisolated(unsafe) var _composedFrameRate: Double = 0
+    private nonisolated(unsafe) var _composedWorstGapMs: Double = 0
+    private nonisolated(unsafe) var frameWindowStart: Double = 0
+    private nonisolated(unsafe) var frameWindowCount: Int = 0
+    private nonisolated(unsafe) var lastComposedAt: Double = 0
+    private nonisolated(unsafe) var windowWorstGapMs: Double = 0
+    private nonisolated let frameRateLock = NSLock()
+
+    /// One frame that will reach the outputs. Counted over a one-second
+    /// window rather than smoothed, so the figure is a count of real frames
+    /// and not an estimate of one.
+    private nonisolated func noteComposedFrame(at timestamp: Double) {
+        frameRateLock.lock()
+        defer { frameRateLock.unlock() }
+        if lastComposedAt > 0 {
+            let gapMs = (timestamp - lastComposedAt) * 1000
+            if gapMs > windowWorstGapMs { windowWorstGapMs = gapMs }
+        }
+        lastComposedAt = timestamp
+        if frameWindowStart == 0 { frameWindowStart = timestamp }
+        frameWindowCount += 1
+        let elapsed = timestamp - frameWindowStart
+        guard elapsed >= 1 else { return }
+        _composedFrameRate = Double(frameWindowCount) / elapsed
+        _composedWorstGapMs = windowWorstGapMs
+        frameWindowStart = timestamp
+        frameWindowCount = 0
+        windowWorstGapMs = 0
+    }
+
     func append(_ track: UInt8, buffer: CMSampleBuffer) {
         if track == videoTrackScreenObject.track {
             let lagMs = (CMClockGetTime(CMClockGetHostTimeClock()).seconds
@@ -202,6 +257,9 @@ public final class Screen: ScreenObjectContainerConvertible {
             return nil
         }
         self.presentationTimeStamp = presentationTimeStamp
+        // Past every early return above: only a frame that will actually be
+        // handed onward is worth counting.
+        noteComposedFrame(at: updateFrame.timestamp)
         var timingInfo = CMSampleTimingInfo(
             duration: CMTime(seconds: updateFrame.targetTimestamp - updateFrame.timestamp, preferredTimescale: Self.preferredTimescale),
             presentationTimeStamp: presentationTimeStamp,
