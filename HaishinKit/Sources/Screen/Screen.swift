@@ -121,6 +121,7 @@ public final class Screen: ScreenObjectContainerConvertible {
 
     /// Creates a screen object.
     public init() {
+        videoTrackScreenObject.pacing = sourcePacing
         try? addChild(videoTrackScreenObject)
         CVPixelBufferPoolCreate(nil, nil, dynamicRangeMode.makePixelBufferAttributes(size), &pixelBufferPool)
     }
@@ -191,6 +192,20 @@ public final class Screen: ScreenObjectContainerConvertible {
     private nonisolated(unsafe) var lastComposedAt: Double = 0
     private nonisolated(unsafe) var windowWorstGapMs: Double = 0
     private nonisolated let frameRateLock = NSLock()
+
+    /// How evenly the compositor advances through its source, and how many
+    /// source frames its input queue refuses. Both read from any thread.
+    public nonisolated var sourceStepMs: Double { sourcePacing.stepMs }
+    public nonisolated var sourceStepSpreadMs: Double { sourcePacing.stepSpreadMs }
+    public nonisolated var droppedInputFramesPerSecond: Int { sourcePacing.droppedPerSecond }
+
+    private nonisolated let sourcePacing = SourcePacingStats()
+
+    /// Depth of the main video track's input queue. See
+    /// `VideoTrackScreenObject.inputCapacity`.
+    public func setInputCapacity(_ capacity: Int) {
+        videoTrackScreenObject.inputCapacity = capacity
+    }
 
     /// One frame that will reach the outputs. Counted over a one-second
     /// window rather than smoothed, so the figure is a count of real frames

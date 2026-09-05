@@ -38,6 +38,25 @@ public final class VideoTrackScreenObject: ScreenObject, ChromaKeyProcessable {
         return .normal
     }
 
+    /// How many source frames the input queue will hold.
+    ///
+    /// Three is enough for a source running at the compositor's own rate, and
+    /// tight for one running at twice it: two frames land per composite, so a
+    /// single late render is all it takes to present a third and have it
+    /// discarded. Configurable so a 60 fps device feeding a 30 fps composite
+    /// can be given headroom without changing anything for a source that
+    /// never needed it. Depth costs no latency here — frames are dequeued by
+    /// presentation time, not by arrival order.
+    var inputCapacity: Int = capacity {
+        didSet {
+            guard inputCapacity != oldValue, inputCapacity > 0 else { return }
+            queue = try? TypedBlockQueue(capacity: inputCapacity, handlers: .outputPTSSortedSampleBuffers)
+        }
+    }
+
+    /// Set by the screen so pacing can be read from outside the actor.
+    var pacing: SourcePacingStats?
+
     private var queue: TypedBlockQueue<CMSampleBuffer>?
     private var effects: [any VideoEffect] = .init()
     private var frameTracker = FrameTracker()
@@ -104,6 +123,10 @@ public final class VideoTrackScreenObject: ScreenObject, ChromaKeyProcessable {
         }
         heldPixelBuffer = pixelBuffer
         frameTracker.update(sampleBuffer.presentationTimeStamp)
+        pacing?.noteUsed(
+            presentationTime: sampleBuffer.presentationTimeStamp.seconds,
+            at: CMClockGetTime(CMClockGetHostTimeClock()).seconds
+        )
         return makeImage(from: pixelBuffer, renderer)
     }
 
@@ -148,12 +171,20 @@ public final class VideoTrackScreenObject: ScreenObject, ChromaKeyProcessable {
     }
 
     func enqueue(_ sampleBuffer: CMSampleBuffer) {
-        try? queue?.enqueue(sampleBuffer)
+        do {
+            try queue?.enqueue(sampleBuffer)
+        } catch {
+            // A full queue discards the frame. That was silent, and a silently
+            // discarded source frame is a hole in the motion that leaves the
+            // output frame rate looking perfect.
+            pacing?.noteDropped()
+        }
         invalidateLayout()
     }
 
     func reset() {
         frameTracker.clear()
+        pacing?.reset()
         heldPixelBuffer = nil
         try? queue?.reset()
         invalidateLayout()
