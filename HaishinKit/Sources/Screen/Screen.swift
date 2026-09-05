@@ -239,11 +239,57 @@ public final class Screen: ScreenObjectContainerConvertible {
                 deliveryLagLock.unlock()
             }
         }
+        if !accepts(buffer, on: track) {
+            return
+        }
         let screens: [VideoTrackScreenObject] = root.getScreenObjects()
         for screen in screens where screen.track == track {
             screen.enqueue(buffer)
         }
     }
+
+    /// Whether a source frame should reach the compositor at all.
+    ///
+    /// A source running faster than the composite rate has to be thinned
+    /// somewhere. Left alone it is thinned by the render itself, which asks
+    /// "which frames are due by now" against a clock that is not the source's
+    /// — and the boundary between two-frames-due and one-or-three wanders as
+    /// the two clocks drift. The output frame rate stays perfect while the
+    /// picture advances in steps of one source frame and then three: even
+    /// timing, uneven motion.
+    ///
+    /// Thinning it here instead, in the source's own presentation time, makes
+    /// every step the same size. What drift then costs is a repeated or
+    /// skipped frame once the two clocks have slipped a whole period apart —
+    /// minutes, against several stutters a second.
+    ///
+    /// A no-op for a source already arriving at the composite rate: its steps
+    /// clear the threshold, so nothing is refused.
+    private func accepts(_ buffer: CMSampleBuffer, on track: UInt8) -> Bool {
+        guard sourcePacingInterval > 0 else { return true }
+        let presentationTime = buffer.presentationTimeStamp.seconds
+        guard presentationTime.isFinite else { return true }
+        if let last = lastAcceptedPresentationTime[track] {
+            let step = presentationTime - last
+            // Backwards or absurd means a new source — a cut, a reset clock.
+            // Take the frame and start the cadence again from it.
+            if step > 0, step < sourcePacingInterval * 0.75 {
+                return false
+            }
+        }
+        lastAcceptedPresentationTime[track] = presentationTime
+        return true
+    }
+
+    /// Thin every source down to this rate before compositing. Zero disables
+    /// it and restores the render-time selection.
+    public func setSourcePacing(frameRate: Double) {
+        sourcePacingInterval = frameRate > 0 ? 1 / frameRate : 0
+        lastAcceptedPresentationTime.removeAll()
+    }
+
+    private var sourcePacingInterval: Double = 0
+    private var lastAcceptedPresentationTime: [UInt8: Double] = [:]
 
     func makeSampleBuffer(_ updateFrame: DisplayLinkTime) -> CMSampleBuffer? {
         defer {
