@@ -129,7 +129,6 @@ public final actor MediaMixer {
     private lazy var audioIO = AudioCaptureUnit(session, isMultiTrackAudioMixingEnabled: isMultiTrackAudioMixingEnabled)
     private lazy var videoIO = VideoCaptureUnit(session)
     private lazy var session: (any CaptureSessionConvertible) = captureSessionMode.makeSession()
-    @ScreenActor
     /// Whether composition beats on its own queue rather than on a display
     /// link attached to the main run loop. See
     /// `DisplayLinkChoreographer.usesSteadyClock`. Takes effect the next time
@@ -139,6 +138,7 @@ public final actor MediaMixer {
         set { DisplayLinkChoreographer.usesSteadyClock = newValue }
     }
 
+    @ScreenActor
     private lazy var displayLink = DisplayLinkChoreographer()
 
     /// Creates a new instance.
