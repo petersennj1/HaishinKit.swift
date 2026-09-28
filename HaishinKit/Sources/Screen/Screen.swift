@@ -374,5 +374,25 @@ public final class Screen: ScreenObjectContainerConvertible {
         for screen in screens {
             screen.reset()
         }
+        // BenchMarks: the timing state goes too, or it outlives the stop.
+        //
+        // `targetTimestamp` is only updated at the end of a composed frame, so
+        // after a stop it still holds the last tick from BEFORE. On a restart
+        // the camera's first frame arrives before the display link's first new
+        // tick, and `setVideoCaptureLatency` measured it against that stale
+        // target: a latency of minus however long the mixer was stopped. That
+        // stamps one frame that far in the FUTURE, it is composed, and
+        // `presentationTimeStamp` — the never-go-backwards mark — lands that
+        // far ahead. Every correct frame after it is then "older" and refused,
+        // until real time catches up. Measured on an iPad after an 11 s trip
+        // to the background: one frame at return with a 10,878 ms gap, then
+        // 318 frames refused and nothing composed for ~11 s, then recovery.
+        //
+        // Zero target also means `setVideoCaptureLatency` does nothing until a
+        // fresh tick has set a real one — so the first latency after a restart
+        // is measured against the present, never the past.
+        presentationTimeStamp = .zero
+        targetTimestamp = 0
+        videoCaptureLatency = 0
     }
 }
