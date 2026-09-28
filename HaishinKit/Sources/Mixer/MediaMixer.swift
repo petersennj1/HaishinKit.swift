@@ -391,7 +391,22 @@ public final actor MediaMixer {
             Task { @ScreenActor in
                 displayLink.preferredFramesPerSecond = await Int(frameRate)
                 displayLink.startRunning()
+                // BenchMarks: only the newest loop may compose. A stopped
+                // clock's stream still hands its loop every tick it had
+                // buffered — `finish()` drains, it does not discard — and a
+                // loop parked behind a trip to the background runs them after
+                // `screen.reset()`, even after the restart. Each stale tick
+                // writes a pre-stop `targetTimestamp`; the next camera frame
+                // measures its latency against it (minus the whole time away),
+                // one frame is stamped that far in the future, and every frame
+                // after it is refused as older than that mark until real time
+                // catches up. Reproduced on an iPad after 10.5 s away: a
+                // latency of -10.55 s, 300 refusals, 10.6 s frozen.
+                let run = screen.beginTickRun()
                 for await updateFrame in displayLink.updateFrames {
+                    guard screen.isCurrentTickRun(run) else {
+                        break
+                    }
                     guard let buffer = screen.makeSampleBuffer(updateFrame) else {
                         continue
                     }

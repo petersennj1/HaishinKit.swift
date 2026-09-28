@@ -360,6 +360,18 @@ public final class Screen: ScreenObjectContainerConvertible {
         return sampleBuffer
     }
 
+    /// Which compose loop owns the clock. See `MediaMixer.setVideoRenderingMode`.
+    private var tickRun = 0
+
+    func beginTickRun() -> Int {
+        tickRun += 1
+        return tickRun
+    }
+
+    func isCurrentTickRun(_ run: Int) -> Bool {
+        run == tickRun
+    }
+
     func setVideoCaptureLatency(_ presentationTimeStamp: CMTime) {
         guard 0 < targetTimestamp else {
             return
@@ -394,5 +406,8 @@ public final class Screen: ScreenObjectContainerConvertible {
         presentationTimeStamp = .zero
         targetTimestamp = 0
         videoCaptureLatency = 0
+        // And the loop that was composing is finished with, whatever ticks it
+        // still has queued.
+        tickRun += 1
     }
 }
