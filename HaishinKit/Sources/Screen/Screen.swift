@@ -160,6 +160,22 @@ public final class Screen: ScreenObjectContainerConvertible {
     private nonisolated(unsafe) var _deliveryLagMs: Double = 0
     private nonisolated let deliveryLagLock = NSLock()
 
+    /// Seconds since a frame last arrived on a track, by host clock, or nil
+    /// for a track that has never delivered. A capture device can stop
+    /// delivering while still attached and still listed — a USB card whose
+    /// neighbour on the hub was unplugged froze that way for good — and
+    /// nothing else in the pipeline notices: the compositor keeps drawing the
+    /// last frame at full rate.
+    public nonisolated func secondsSinceLastFrame(onTrack track: UInt8) -> Double? {
+        arrivalLock.lock()
+        defer { arrivalLock.unlock() }
+        guard let last = lastArrival[track] else { return nil }
+        return CMClockGetTime(CMClockGetHostTimeClock()).seconds - last
+    }
+
+    private nonisolated(unsafe) var lastArrival: [UInt8: Double] = [:]
+    private nonisolated let arrivalLock = NSLock()
+
     /// Frames per second actually composited and handed to the outputs, and
     /// the longest gap between two consecutive ones in the last second.
     ///
@@ -230,6 +246,9 @@ public final class Screen: ScreenObjectContainerConvertible {
     }
 
     func append(_ track: UInt8, buffer: CMSampleBuffer) {
+        arrivalLock.lock()
+        lastArrival[track] = CMClockGetTime(CMClockGetHostTimeClock()).seconds
+        arrivalLock.unlock()
         if track == videoTrackScreenObject.track {
             let lagMs = (CMClockGetTime(CMClockGetHostTimeClock()).seconds
                 - buffer.presentationTimeStamp.seconds) * 1000
