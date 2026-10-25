@@ -63,8 +63,16 @@ final class ScreenRendererByGPU: ScreenRenderer {
     }
 
     func draw(_ screenObject: ScreenObject) {
-        guard let image = images[screenObject] else {
+        guard var image = images[screenObject] else {
             return
+        }
+        if screenObject.alpha < 0.999 {
+            // Core Image unpremultiplies around a color matrix and
+            // premultiplies after, so scaling the alpha channel alone is the
+            // whole of it.
+            image = image.applyingFilter("CIColorMatrix", parameters: [
+                "inputAVector": CIVector(x: 0, y: 0, z: 0, w: max(screenObject.alpha, 0))
+            ])
         }
         let origin = screenObject.bounds.origin
         if origin.x == 0 && origin.y == 0 {

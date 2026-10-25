@@ -60,6 +60,13 @@ open class ScreenObject {
     /// Specifies the visibility of the object.
     public var isVisible = true
 
+    /// How opaque the object is drawn, 0 to 1, on top of whatever opacity its
+    /// own picture carries. Honored by the GPU renderer, which scales the
+    /// picture's alpha as it composites it: a fade is this number changing,
+    /// not the picture being drawn again at each step. The CPU renderer
+    /// ignores it.
+    public var alpha: CGFloat = 1
+
     #if os(macOS)
     /// Specifies the default spacing to laying out content in the screen object.
     public var layoutMargin: NSEdgeInsets = .init(top: 0, left: 0, bottom: 0, right: 0)
